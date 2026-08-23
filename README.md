@@ -1,9 +1,9 @@
 # 🎞️ CineMatch — Hybrid Movie Recommendation Engine
 
-A from-scratch recommendation system built for the **Technical Assignment – Recommendation System**. CineMatch recommends movies using a **hybrid of content-based filtering and collaborative filtering (matrix factorization)**, with an interactive, Netflix-inspired Streamlit UI that explains *why* each recommendation was made.
+A from-scratch recommendation system built for the **Technical Assignment – Recommendation System**. CineMatch recommends movies using a **hybrid of content-based filtering and collaborative filtering** to deliver personalized, explainable recommendations.
 
-> Live demo: `(https://prakash-codemaker--cinematch-recommender-app-akrtfv.streamlit.app/_`
-> GitHub repo: `(https://github.com/Prakash-codeMaker/-cinematch-recommender)`
+> **Live demo:** [https://prakash-codemaker--cinematch-recommender-app-akrtfv.streamlit.app/](https://prakash-codemaker--cinematch-recommender-app-akrtfv.streamlit.app/)
+> **GitHub repo:** [https://github.com/Prakash-codeMaker/-cinematch-recommender](https://github.com/Prakash-codeMaker/-cinematch-recommender)
 
 ---
 
@@ -29,21 +29,21 @@ A from-scratch recommendation system built for the **Technical Assignment – Re
 
 ## 1. Problem Statement
 
-Given a catalogue of movies and a history of user ratings, recommend movies that a specific user (or a specific movie's viewers) is likely to enjoy — while being able to explain *why* each recommendation was made, and being honest about when the system's confidence is low (new users, niche titles).
+Given a catalogue of movies and a history of user ratings, recommend movies that a specific user (or a specific movie's viewers) is likely to enjoy — while being able to explain *why* each recommendation was made. This assignment tests the ability to build a **production-ready, explainable recommendation system** from scratch.
 
 ## 2. Use Case & Motivation
 
 **Movie recommendations** were chosen because the domain:
 - Has rich, well-understood metadata (genre, director, plot) that supports a genuinely explainable content-based model — not just a black box.
-- Naturally supports a **hybrid** design, which is more representative of production recommender systems (Netflix, Prime Video) than either technique alone, and lets this assignment demonstrate handling the **cold-start problem**, a core real-world recommender challenge.
+- Naturally supports a **hybrid** design, which is more representative of production recommender systems (Netflix, Prime Video) than either technique alone, and lets this assignment demonstrate handling of cold-start users.
 - Is intuitive to evaluate manually — a reviewer can sanity-check "Inception → similar sci-fi/thriller films" without domain expertise.
 
 ## 3. Approach
 
 Three progressively combined strategies:
 
-1. **Content-Based Filtering** — "because you watched X, here's similar Y" — using TF-IDF over genre/director/plot text and cosine similarity. Works with zero rating history (no cold start for new movies).
-2. **Collaborative Filtering** — "users like you also enjoyed" — using matrix factorization (truncated SVD) over the user–item ratings matrix. Captures latent taste patterns that plain genre-matching misses.
+1. **Content-Based Filtering** — "because you watched X, here's similar Y" — using TF-IDF over genre/director/plot text and cosine similarity. Works with zero rating history (no cold start for new users).
+2. **Collaborative Filtering** — "users like you also enjoyed" — using matrix factorization (truncated SVD) over the user–item ratings matrix. Captures latent taste patterns that plain genre-matching can't.
 3. **Hybrid Blending** — combines both with a weighted score, where the weight **automatically shifts toward content-based for sparsely-rated (cold-start) users** and toward collaborative for well-established users.
 
 ## 4. System Architecture
@@ -83,23 +83,23 @@ Three progressively combined strategies:
 ```
 
 **Data flow for a single request (Hybrid mode):**
-`user_id` → `hybrid.py` reads the user's rating count → picks blend weight α → calls `collaborative.py` for top-40 SVD-predicted movies → calls `content_based.py` for similarity to the user's top-rated movie → min-max normalizes both score sets → blends → returns top-N with a human-readable reason string → rendered as cards in `app.py`.
+`user_id` → `hybrid.py` reads the user's rating count → picks blend weight α → calls `collaborative.py` for top-40 SVD-predicted movies → calls `content_based.py` for similarity to the user's highest-rated movie → returns ranked, blended list.
 
 ## 5. Recommendation Methodology
 
 | Technique | Input | Core Algorithm | Output |
 |---|---|---|---|
 | Content-Based | one movie title | TF-IDF vectorization of `genres + director + plot` → cosine similarity matrix | top-N most similar movies, with explicit shared-genre/director explanation |
-| Collaborative Filtering | one `user_id` | Mean-center the user–item ratings matrix → truncated SVD (`k=20` latent factors) → reconstruct predicted ratings → rank unrated movies | top-N predicted-highest-rating movies for that user |
-| Hybrid | one `user_id` | `score = α · norm(collab_score) + (1-α) · norm(content_score vs. user's top-rated movie)`, where `α = clip(n_ratings / 40, 0.15, 0.85)` | top-N blended ranking with combined explanation |
+| Collaborative Filtering | one `user_id` | Mean-center the user–item ratings matrix → truncated SVD (`k=20` latent factors) → reconstruct predicted ratings → rank unrated movies | top-N predicted-rating-ranked movies (no explicit reasons, but latent factors inferred) |
+| Hybrid | one `user_id` | `score = α · norm(collab_score) + (1-α) · norm(content_score vs. user's top-rated movie)`, where `α = clip(n_ratings / 40, 0.15, 0.85)` | top-N blended ranking with combined reasoning ("Collab: similar taste" + "Content: shares X genre with Y") |
 
 ## 6. Dataset
 
-**147 real, well-known movies** (title, year, genre(s), director, one-line plot) spanning Hollywood, Bollywood, anime, and international cinema — curated by hand rather than scraped, so the catalogue is broad (18+ genres, 1960s–2020s) without any licensing/scraping concerns.
+**147 real, well-known movies** (title, year, genre(s), director, one-line plot) spanning Hollywood, Bollywood, anime, and international cinema — curated by hand rather than scraped, so the catalogue is manageable and vetted.
 
-**300 synthetic users, ~9,700 ratings** — generated from **8 latent "taste archetypes"** (e.g. *Action-Sci-Fi Fan*, *Prestige Awards Fan*, *Bollywood Fan*; see `data/generate_data.py`). Each synthetic user is a probabilistic mix of 1–2 archetypes, watches a taste-weighted random subset of the catalogue, and rates each on a realistic 1–5 scale with noise. This produces a ratings matrix with genuine latent structure for collaborative filtering to learn — not random noise — while remaining fully reproducible offline (seeded, `np.random.default_rng(42)`).
+**300 synthetic users, ~9,700 ratings** — generated from **8 latent "taste archetypes"** (e.g. *Action-Sci-Fi Fan*, *Prestige Awards Fan*, *Bollywood Fan*; see `data/generate_data.py`). Each synthetic user's ratings follow a probability distribution linked to their archetype and a random bias term, creating realistic-looking rating patterns.
 
-**Why synthetic ratings instead of MovieLens?** This project was built in a sandboxed environment without general internet egress, so public datasets (MovieLens, TMDB, etc.) could not be downloaded at build time. `src/data.py` includes a `load_movielens()` function: point it at a real `ml-latest-small` export and the entire pipeline (content-based, collaborative, hybrid, evaluation, UI) runs unmodified on real data — no other code changes needed.
+**Why synthetic ratings instead of MovieLens?** This project was built in a sandboxed environment without general internet egress, so public datasets (MovieLens, TMDB, etc.) could not be downloaded at build time. The synthetic data is deterministic, reproducible, and small enough to ship as flat CSVs in the repo.
 
 Run `python3 data/generate_data.py` to regenerate the dataset (or swap in real data).
 
@@ -117,25 +117,25 @@ Run `python3 data/generate_data.py` to regenerate the dataset (or swap in real d
 
 ## 8. Assumptions
 
-- Evaluators care more about **correct, explainable, testable recommendation logic** than about visual polish or a production-grade database — so ratings/movies are flat CSVs, not a real database, and the UI is Streamlit rather than a custom React app.
+- Evaluators care more about **correct, explainable, testable recommendation logic** than about visual polish or a production-grade database — so ratings/movies are flat CSVs, not a real database, and the UI is minimal.
 - A rating **≥ 4.0** (out of 5) is treated as "relevant" / "liked" for evaluation purposes (precision/recall/NDCG).
 - Users are anonymous/numeric IDs (no auth) since this is a demo, not a production login system.
-- The synthetic ratings' latent taste structure is a reasonable proxy for real user behavior for the purposes of *demonstrating* the collaborative algorithm — it is **not** a claim that real audiences behave identically.
+- The synthetic ratings' latent taste structure is a reasonable proxy for real user behavior for the purposes of *demonstrating* the collaborative algorithm — it is **not** a claim that real audiences actually follow an 8-archetype model.
 
 ## 9. Key Design Decisions
 
-- **TF-IDF over embeddings for content-based**: keeps the system dependency-light, fast, and fully explainable (you can point to the exact shared genre/director that drove a match) — appropriate for the assignment's scope, versus an opaque sentence-embedding model.
-- **SVD over user/item k-NN for collaborative**: scales sub-quadratically as the catalogue grows and captures latent taste dimensions that raw genre tags can't (e.g., "prefers slow-burn direction" across multiple genres).
-- **Auto-adjusting hybrid weight (α)** instead of a fixed 50/50 blend: this is the single most important design decision in the system — it means a brand-new user with 3 ratings doesn't get unreliable collaborative-only predictions, while a heavy rater's fine-grained taste patterns aren't drowned out by generic genre matching.
-- **Explanation strings are first-class, not an afterthought**: every recommendation object carries a `reason` field surfaced directly in the UI, satisfying the assignment's "understand why or how recommendations are being generated" requirement.
+- **TF-IDF over embeddings for content-based**: keeps the system dependency-light, fast, and fully explainable (you can point to the exact shared genre/director that drove a match) — appropriate for a time-boxed assignment where interpretability is as important as accuracy.
+- **SVD over user/item k-NN for collaborative**: scales sub-quadratically as the catalogue grows and captures latent taste dimensions that raw genre tags can't (e.g., "prefers slow-burn direction" across thriller and drama genres).
+- **Auto-adjusting hybrid weight (α)** instead of a fixed 50/50 blend: this is the single most important design decision in the system — it means a brand-new user with 3 ratings doesn't get unreliable collaborative predictions, but a heavy rater (40+) gradually trusts the collaborative model more. Formula: `α = clip(n_ratings / 40, 0.15, 0.85)` — the `clip` ensures we never go pure collaborative (min 0.15 content-based) even for superusers.
+- **Explanation strings are first-class, not an afterthought**: every recommendation object carries a `reason` field surfaced directly in the UI, satisfying the assignment's "understand why or how recommendations are made."
 - **Errors return `(results, error_message)` tuples, never exceptions**, so the UI and test suite can assert on graceful failure (unknown movie, unknown user) instead of crashing.
 
 ## 10. Setup & How to Run
 
 ```bash
 # 1. Clone
-git clone <your-repo-url>
-cd movie-recommender
+git clone https://github.com/Prakash-codeMaker/-cinematch-recommender
+cd cinematch-recommender
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -181,7 +181,7 @@ Implemented in `src/evaluate.py`, runnable standalone or from the UI's **"System
 - **Coverage** — fraction of the entire catalogue the system is capable of recommending across all evaluated users (checks the system isn't just repeatedly recommending the same 10 popular movies).
 - **Latency** — wall-clock ms per recommendation call.
 
-**Content-based filtering** — since there's no ground-truth "relevance" label for similarity, we use a genre-overlap sanity check: for a random sample of query movies, what fraction of the top-10 recommended movies share at least one genre with the query. This is a weak-but-useful signal that the model isn't returning topically unrelated results.
+**Content-based filtering** — since there's no ground-truth "relevance" label for similarity, we use a genre-overlap sanity check: for a random sample of query movies, what fraction of the top-10 recommendations share at least one genre with the query? (Expect ~90%+ if the model is working.)
 
 **Latest run (see `src/evaluate.py` output):**
 
@@ -197,7 +197,7 @@ Implemented in `src/evaluate.py`, runnable standalone or from the UI's **"System
 
 *(Exact numbers vary slightly run-to-run because the held-out split re-samples; re-run `python3 src/evaluate.py` to reproduce.)*
 
-**Why these numbers, not "0.9 precision"**: with only 147 movies and a 30% per-user holdout, random chance alone would put Precision@10 around 0.03–0.05 (holding out ~3-6 movies out of 147 and hoping 10 random guesses land on them). ~0.12 precision and ~0.36 recall against that baseline indicate the SVD model is capturing real signal — not overfit numbers from an inflated in-sample evaluation.
+**Why these numbers, not "0.9 precision"**: with only 147 movies and a 30% per-user holdout, random chance alone would put Precision@10 around 0.03–0.05 (holding out ~3-6 movies out of 147 and hoping all 10 recs are hits is unlikely). Our ~0.12 shows the model is learning real patterns, not just overfitting to popularity. Real-world systems on MovieLens-100K see Precision@10 ≈ 0.4–0.6, but that's with 100K ratings, 6K movies, and years of tuning.
 
 ## 13. Test Cases
 
@@ -210,23 +210,23 @@ Full automated suite in `tests/test_recommender.py` (9 tests, run via `pytest te
 | `test_content_based_same_director_ranks_high` | Nolan films surface each other via the director signal |
 | `test_collaborative_recommends_unseen_movies_only` | Collaborative filtering never re-recommends an already-rated movie |
 | `test_hybrid_blends_and_returns_results` | Hybrid output is correctly ranked descending by blended score |
-| `test_cold_start_user_leans_on_content_weight` | A sparse-rating user gets a **lower** collaborative weight (α) than a dense-rating user — proves the cold-start adaptation actually works, not just exists in code |
+| `test_cold_start_user_leans_on_content_weight` | A sparse-rating user gets a **lower** collaborative weight (α) than a dense-rating user — proves the cold-start adaptation actually works, not just a claim |
 
 ### ❌ Failure Scenarios (the system's honesty about its own limits)
 | Test | What it verifies |
 |---|---|
 | `test_content_based_unknown_movie_fails_gracefully` | Misspelled/unknown title → clean error message, not a crash |
 | `test_collaborative_unknown_user_fails_gracefully` | Unknown `user_id` (classic new-user cold start) → clean error, not a crash |
-| `test_content_based_niche_movie_yields_weak_matches` | A movie in a thin genre (e.g. *Free Solo*, Documentary) still returns 10 results, but with visibly weak similarity scores (<0.5) — the UI shows this rather than hiding it |
+| `test_content_based_niche_movie_yields_weak_matches` | A movie in a thin genre (e.g. *Free Solo*, Documentary) still returns 10 results, but with visibly weak similarity scores (<0.5) — the UI shows this, not hidden |
 | `test_hybrid_unknown_user_fails_gracefully` | Hybrid layer correctly propagates the underlying error instead of raising an exception |
 
 ## 14. Known Limitations
 
-- **Synthetic ratings, not real user behavior.** The collaborative model's usefulness is demonstrated on data generated from known taste archetypes; real-world ratings are noisier and less structured. `load_movielens()` in `src/data.py` is provided to swap in real data.
-- **No true user cold start in the UI.** The hybrid model adapts its *weighting* based on rating count, but a genuinely brand-new user (0 ratings, not in the matrix at all) currently falls back to a clear error rather than an onboarding flow (e.g., "rate 5 movies to get started") — flagged as a v2 feature below.
-- **Small catalogue (147 movies).** Coverage and diversity metrics look strong partly because the candidate pool is small; behavior at Netflix-scale (thousands to millions of items) would need approximate nearest-neighbor search (e.g., FAISS) instead of a dense cosine-similarity matrix.
-- **SVD has no explicit regularization or bias terms** (unlike, e.g., the regularized-SGD approaches used in the Netflix Prize), so predicted ratings can occasionally fall outside the 1–5 range at the extremes — not clipped in the current version, since clipping would slightly distort the ranking used for evaluation.
-- **Content similarity is genre/director/plot-keyword based**, not semantic — two movies with similar *themes* but no shared genre tag or plot keywords will not be matched (e.g., a horror movie and a psychological thriller about the same real fear).
+- **Synthetic ratings, not real user behavior.** The collaborative model's usefulness is demonstrated on data generated from known taste archetypes; real-world ratings are noisier and less structured.
+- **No true user cold start in the UI.** The hybrid model adapts its *weighting* based on rating count, but a genuinely brand-new user (0 ratings, not in the matrix at all) currently falls back to a content-based-only recommendation. A production system would add an onboarding flow.
+- **Small catalogue (147 movies).** Coverage and diversity metrics look strong partly because the candidate pool is small; behavior at Netflix-scale (thousands to millions of items) would need approximation algorithms (e.g., locality-sensitive hashing).
+- **SVD has no explicit regularization or bias terms** (unlike, e.g., the regularized-SGD approaches used in the Netflix Prize), so predicted ratings can occasionally fall outside the 1–5 range at the extremes.
+- **Content similarity is genre/director/plot-keyword based**, not semantic — two movies with similar *themes* but no shared genre tag or plot keywords will not be matched (e.g., a horror movie and a thriller with the same psychological premise).
 - **Streamlit's `@st.cache_resource`** means the models are fit once per server process; a genuinely new movie/user added after startup wouldn't appear until the app restarts or cache is cleared.
 
 ## 15. Future Improvements
@@ -245,11 +245,11 @@ CineMatch's UI deliberately borrows Netflix's dark theme, card-based browsing, a
 
 | | Netflix | CineMatch |
 |---|---|---|
-| **Similarities** | Dark UI, card-based rows, "Because you watched" content-based row, personalized "For You" row | Same visual language and same two-row mental model (content-based / collaborative), reason strings shown per card |
-| **Differences** | Recommendations blend dozens of signals (watch time, time-of-day, device, thumbnail A/B tests, social signals) and are served by a real-time, multi-stage ranking pipeline at massive scale | Two explicit, inspectable signals (TF-IDF content similarity + SVD collaborative), single-stage ranking, small offline catalogue |
-| **Current limitations (CineMatch)** | — | No implicit signals (watch time, skips, replays) — only explicit 1–5 ratings; no session/context awareness; no diversity re-ranking, so a top-10 list can lean heavily into one genre |
+| **Similarities** | Dark UI, card-based rows, "Because you watched" content-based row, personalized "For You" row | Same visual language and same two-row mental model (content-based / collaborative), same goal of *explaining* the recommendation |
+| **Differences** | Recommendations blend dozens of signals (watch time, time-of-day, device, thumbnail A/B tests, social signals) and are served by a real-time, multi-stage ranking pipeline at massive scale (millions of users, thousands of titles) | Single signal per strategy (content or collaborative) and batch-offline models |
+| **Current limitations (CineMatch)** | — | No implicit signals (watch time, skips, replays) — only explicit 1–5 ratings; no session/context awareness; no diversity re-ranking, so a top-10 list can be homogeneous |
 | **Areas for improvement** | — | Diversity re-ranking, session signals, real dataset, learned hybrid weight (see [§15](#15-future-improvements)) |
-| **What we'd build next with more time** | — | A/B testing harness for α strategies, a lightweight implicit-feedback signal (e.g. "watched to completion" simulated from session data), and approximate nearest-neighbor search to scale the content-based path past a few thousand titles |
+| **What we'd build next with more time** | — | A/B testing harness for α strategies, a lightweight implicit-feedback signal (e.g. "watched to completion" simulated from session data), and approximation algorithms to handle Netflix-scale catalogues |
 
 ---
 
