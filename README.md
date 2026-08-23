@@ -2,7 +2,7 @@
 
 A from-scratch recommendation system built for the **Technical Assignment – Recommendation System**. CineMatch recommends movies using a **hybrid of content-based filtering and collaborative filtering (matrix factorization)**, with an interactive, Netflix-inspired Streamlit UI that explains *why* each recommendation was made.
 
-> Live demo: `<https://prakash-codemaker--cinematch-recommender-app-akrtfv.streamlit.app/>`
+> Live demo: `https://prakash-codemaker--cinematch-recommender-app-akrtfv.streamlit.app/`
 > GitHub repo: `https://github.com/Prakash-codeMaker/-cinematch-recommender`
 
 ---
