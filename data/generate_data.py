@@ -1,0 +1,263 @@
+"""
+generate_data.py
+-----------------
+Builds the two CSVs the recommender runs on:
+  - movies.csv   : 150 real, well-known films with genre/year/plot metadata
+  - ratings.csv  : synthetic (but behaviourally realistic) user-item ratings,
+                   generated from latent "taste profiles" so that collaborative
+                   filtering has real signal to learn from.
+
+Why synthetic ratings instead of MovieLens?
+This sandbox has no general internet egress, so public datasets (MovieLens,
+TMDB, etc.) cannot be downloaded at build time. To keep the project 100%
+reproducible offline, we hand-curate the movie catalogue (real titles/genres/
+years -- these are just facts, not copyrighted text) and generate a ratings
+matrix from 8 synthetic "taste archetypes" (e.g. "Action/Sci-Fi fan",
+"Indie Drama fan") so the collaborative signal is realistic rather than
+random noise. This is documented as a limitation in README.md and the repo
+includes a drop-in loader (src/data.py: load_movielens()) for swapping in
+real MovieLens data if internet access is available.
+"""
+
+import numpy as np
+import pandas as pd
+import json
+import os
+
+RNG = np.random.default_rng(42)
+
+MOVIES = [
+    # (title, year, genres, director, plot)
+    ("The Shawshank Redemption", 1994, "Drama", "Frank Darabont", "A banker is sentenced to life in prison and forms an unlikely friendship while holding onto hope."),
+    ("The Godfather", 1972, "Crime|Drama", "Francis Ford Coppola", "The aging patriarch of an organized crime dynasty transfers control to his reluctant son."),
+    ("The Dark Knight", 2008, "Action|Crime|Drama", "Christopher Nolan", "Batman faces the Joker, a criminal mastermind who plunges Gotham into anarchy."),
+    ("Pulp Fiction", 1994, "Crime|Drama", "Quentin Tarantino", "The lives of two hitmen, a boxer and a gangster's wife intertwine in four tales of violence."),
+    ("Forrest Gump", 1994, "Drama|Romance", "Robert Zemeckis", "A slow-witted but kind man recounts his extraordinary life spanning decades of American history."),
+    ("Inception", 2010, "Action|Sci-Fi|Thriller", "Christopher Nolan", "A thief who steals corporate secrets through dream-sharing is given a chance to plant an idea."),
+    ("The Matrix", 1999, "Action|Sci-Fi", "Lana Wachowski", "A hacker discovers reality is a simulation and joins a rebellion against machine overlords."),
+    ("Goodfellas", 1990, "Crime|Drama", "Martin Scorsese", "The rise and fall of a mob associate over three decades in the New York underworld."),
+    ("Interstellar", 2014, "Adventure|Drama|Sci-Fi", "Christopher Nolan", "A team of explorers travels through a wormhole to save humanity from a dying Earth."),
+    ("Fight Club", 1999, "Drama", "David Fincher", "An insomniac office worker forms an underground fight club that spirals into anarchist chaos."),
+    ("The Lord of the Rings: The Fellowship of the Ring", 2001, "Adventure|Fantasy", "Peter Jackson", "A hobbit inherits a powerful ring and must destroy it to save Middle-earth."),
+    ("Se7en", 1995, "Crime|Drama|Thriller", "David Fincher", "Two detectives hunt a serial killer who bases his murders on the seven deadly sins."),
+    ("The Silence of the Lambs", 1991, "Crime|Thriller", "Jonathan Demme", "A trainee FBI agent seeks help from an imprisoned cannibal to catch another serial killer."),
+    ("Saving Private Ryan", 1998, "Drama|War", "Steven Spielberg", "Soldiers go behind enemy lines to bring home a paratrooper whose brothers were killed in action."),
+    ("Gladiator", 2000, "Action|Drama", "Ridley Scott", "A betrayed Roman general seeks revenge against the corrupt emperor who murdered his family."),
+    ("The Departed", 2006, "Crime|Drama|Thriller", "Martin Scorsese", "An undercover cop and a mob informant try to identify each other inside the Boston underworld."),
+    ("Whiplash", 2014, "Drama|Music", "Damien Chazelle", "A young drummer is pushed to his limits by an abusive, perfectionist music conductor."),
+    ("The Prestige", 2006, "Drama|Mystery|Sci-Fi", "Christopher Nolan", "Two rival stage magicians engage in an escalating battle of sabotage and obsession."),
+    ("Parasite", 2019, "Comedy|Drama|Thriller", "Bong Joon-ho", "A poor family schemes to become employed by a wealthy household, with escalating consequences."),
+    ("The Green Mile", 1999, "Crime|Drama|Fantasy", "Frank Darabont", "A death row prison guard witnesses inexplicable events surrounding a gentle giant inmate."),
+    ("Spirited Away", 2001, "Animation|Adventure|Family", "Hayao Miyazaki", "A young girl wanders into a spirit world and must find her way home while working in a bathhouse."),
+    ("The Lion King", 1994, "Animation|Adventure|Drama", "Roger Allers", "A young lion prince flees his kingdom after his father's murder and must reclaim his throne."),
+    ("Toy Story", 1995, "Animation|Adventure|Comedy", "John Lasseter", "A cowboy doll's world is turned upside down when a spaceman toy becomes his owner's favourite."),
+    ("Coco", 2017, "Animation|Adventure|Family", "Lee Unkrich", "A boy is transported to the Land of the Dead and uncovers his family's forgotten musical history."),
+    ("Up", 2009, "Animation|Adventure|Comedy", "Pete Docter", "An elderly widower ties balloons to his house and flies to South America with a stowaway scout."),
+    ("La La Land", 2016, "Comedy|Drama|Music", "Damien Chazelle", "A jazz pianist and an aspiring actress fall in love while pursuing their dreams in Los Angeles."),
+    ("Amelie", 2001, "Comedy|Romance", "Jean-Pierre Jeunet", "A shy Parisian waitress secretly orchestrates small acts of kindness for those around her."),
+    ("Eternal Sunshine of the Spotless Mind", 2004, "Drama|Romance|Sci-Fi", "Michel Gondry", "A couple undergoes a procedure to erase each other from their memories after a painful breakup."),
+    ("Pride & Prejudice", 2005, "Drama|Romance", "Joe Wright", "A spirited young woman navigates class, family and first impressions with a proud landowner."),
+    ("The Notebook", 2004, "Drama|Romance", "Nick Cassavetes", "A poor young man and a wealthy young woman fall deeply in love despite their differing social status."),
+    ("Titanic", 1997, "Drama|Romance", "James Cameron", "A penniless artist and an aristocratic young woman fall in love aboard the ill-fated ocean liner."),
+    ("Superbad", 2007, "Comedy", "Greg Mottola", "Two inseparable high school friends navigate one wild night before their impending graduation."),
+    ("The Grand Budapest Hotel", 2014, "Adventure|Comedy|Drama", "Wes Anderson", "A concierge and his protege get tangled in a stolen painting and a family fortune dispute."),
+    ("Bridesmaids", 2011, "Comedy|Romance", "Paul Feig", "A maid of honour's life unravels as she competes to organise the perfect wedding for her best friend."),
+    ("Jojo Rabbit", 2019, "Comedy|Drama|War", "Taika Waititi", "A lonely German boy discovers his mother is hiding a Jewish girl, with his imaginary friend Hitler as commentary."),
+    ("Get Out", 2017, "Horror|Mystery|Thriller", "Jordan Peele", "A young Black man uncovers a disturbing secret when he visits his white girlfriend's family estate."),
+    ("Hereditary", 2018, "Horror|Mystery", "Ari Aster", "A family unravels dark secrets after the death of their secretive grandmother."),
+    ("A Quiet Place", 2018, "Horror|Sci-Fi|Thriller", "John Krasinski", "A family must live in silence to avoid deadly creatures that hunt by sound."),
+    ("The Conjuring", 2013, "Horror|Mystery|Thriller", "James Wan", "Paranormal investigators help a family terrorized by a dark presence in their farmhouse."),
+    ("Psycho", 1960, "Horror|Mystery|Thriller", "Alfred Hitchcock", "A secretary on the run checks into a secluded motel run by a disturbed man and his 'mother'."),
+    ("Mad Max: Fury Road", 2015, "Action|Adventure|Sci-Fi", "George Miller", "In a post-apocalyptic wasteland, a woman rebels against a tyrant to free his captives."),
+    ("John Wick", 2014, "Action|Crime|Thriller", "Chad Stahelski", "A retired hitman seeks vengeance against the gangsters who killed his dog and stole his car."),
+    ("Die Hard", 1988, "Action|Thriller", "John McTiernan", "An off-duty cop battles terrorists who have taken over a Los Angeles skyscraper on Christmas Eve."),
+    ("Top Gun: Maverick", 2022, "Action|Drama", "Joseph Kosinski", "A veteran fighter pilot trains a new generation for a dangerous, near-impossible mission."),
+    ("Dune", 2021, "Adventure|Drama|Sci-Fi", "Denis Villeneuve", "A noble family becomes embroiled in a war for control of the galaxy's most valuable resource."),
+    ("Blade Runner 2049", 2017, "Drama|Mystery|Sci-Fi", "Denis Villeneuve", "A young blade runner unearths a secret that could plunge what's left of society into chaos."),
+    ("Arrival", 2016, "Drama|Mystery|Sci-Fi", "Denis Villeneuve", "A linguist is recruited to communicate with alien visitors before nations resort to war."),
+    ("Ex Machina", 2014, "Drama|Sci-Fi|Thriller", "Alex Garland", "A programmer is invited to administer a Turing test to an intelligent android."),
+    ("Her", 2013, "Drama|Romance|Sci-Fi", "Spike Jonze", "A lonely writer develops a relationship with an artificially intelligent virtual assistant."),
+    ("Coco Before Chanel", 2009, "Biography|Drama", "Anne Fontaine", "The early life of Coco Chanel as she transforms from cabaret singer to fashion icon."),
+    ("The Social Network", 2010, "Biography|Drama", "David Fincher", "The founding of Facebook and the lawsuits that followed its meteoric rise."),
+    ("Steve Jobs", 2015, "Biography|Drama", "Danny Boyle", "Behind-the-scenes moments before three iconic product launches shape the Apple co-founder's legacy."),
+    ("The Imitation Game", 2014, "Biography|Drama|Thriller", "Morten Tyldum", "Mathematician Alan Turing races to crack the Nazi Enigma code during World War II."),
+    ("Bohemian Rhapsody", 2018, "Biography|Drama|Music", "Bryan Singer", "The story of Queen and lead singer Freddie Mercury's rise to rock stardom."),
+    ("Rocky", 1976, "Drama|Sport", "John G. Avildsen", "A small-time boxer gets a supreme chance to fight the heavyweight champion in a title match."),
+    ("Moneyball", 2011, "Biography|Drama|Sport", "Bennett Miller", "An underfunded baseball manager uses data analytics to build a competitive team."),
+    ("Free Solo", 2018, "Documentary|Adventure", "Jimmy Chin", "A climber attempts to scale Yosemite's El Capitan without ropes or safety gear."),
+    ("March of the Penguins", 2005, "Documentary|Family", "Luc Jacquet", "Emperor penguins undertake a perilous annual journey across Antarctica to breed."),
+    ("Jurassic Park", 1993, "Adventure|Sci-Fi|Thriller", "Steven Spielberg", "Genetically engineered dinosaurs escape containment on an island theme park."),
+    ("Avatar", 2009, "Action|Adventure|Sci-Fi", "James Cameron", "A paraplegic marine embeds with the Na'vi of Pandora and must choose a side in a coming war."),
+    ("Avengers: Endgame", 2019, "Action|Adventure|Sci-Fi", "Anthony Russo", "The surviving Avengers assemble once more to reverse the damage caused by Thanos."),
+    ("Spider-Man: Into the Spider-Verse", 2018, "Animation|Action|Adventure", "Bob Persichetti", "A teenager from Brooklyn becomes Spider-Man and meets other spider-powered heroes across dimensions."),
+    ("The Wolf of Wall Street", 2013, "Biography|Comedy|Crime", "Martin Scorsese", "A stockbroker's rise to wealth through fraud leads to an epic downfall."),
+    ("Catch Me If You Can", 2002, "Biography|Crime|Drama", "Steven Spielberg", "A young con artist impersonates professionals while an FBI agent pursues him relentlessly."),
+    ("Ocean's Eleven", 2001, "Comedy|Crime|Thriller", "Steven Soderbergh", "A crew of con artists plans to rob three Las Vegas casinos simultaneously."),
+    ("Knives Out", 2019, "Comedy|Crime|Drama", "Rian Johnson", "A detective investigates the death of a wealthy crime novelist surrounded by a dysfunctional family."),
+    ("Zodiac", 2007, "Crime|Drama|Mystery", "David Fincher", "Investigators and journalists become obsessed with identifying the Zodiac killer in San Francisco."),
+    ("No Country for Old Men", 2007, "Crime|Drama|Thriller", "Ethan Coen", "A hunter stumbles upon drug money and becomes the target of a relentless killer."),
+    ("There Will Be Blood", 2007, "Drama", "Paul Thomas Anderson", "A ruthless oil prospector builds an empire in early 20th-century California."),
+    ("12 Years a Slave", 2013, "Biography|Drama|History", "Steve McQueen", "A free Black man is kidnapped and sold into slavery in the pre-Civil War United States."),
+    ("Schindler's List", 1993, "Biography|Drama|History", "Steven Spielberg", "A businessman saves the lives of over a thousand Jewish refugees during the Holocaust."),
+    ("Braveheart", 1995, "Biography|Drama|War", "Mel Gibson", "A Scottish warrior leads an uprising against the English king who has invaded Scotland."),
+    ("1917", 2019, "Drama|War", "Sam Mendes", "Two soldiers race across enemy territory to deliver a message that could save hundreds of lives."),
+    ("Dunkirk", 2017, "Action|Drama|War", "Christopher Nolan", "Allied soldiers are surrounded and evacuated from the beaches of Dunkirk during World War II."),
+    ("The Pianist", 2002, "Biography|Drama|Music", "Roman Polanski", "A Polish-Jewish pianist struggles to survive the destruction of the Warsaw ghetto."),
+    ("Life Is Beautiful", 1997, "Comedy|Drama|Romance", "Roberto Benigni", "A father uses humour and imagination to shield his son from the horrors of a concentration camp."),
+    ("City of God", 2002, "Crime|Drama", "Fernando Meirelles", "Two boys growing up in a violent Rio de Janeiro slum take vastly different paths."),
+    ("Oldboy", 2003, "Action|Drama|Mystery", "Park Chan-wook", "A man seeks revenge after being mysteriously imprisoned for 15 years without explanation."),
+    ("Your Name", 2016, "Animation|Drama|Fantasy", "Makoto Shinkai", "Two teenagers mysteriously swap bodies and form a bond that transcends time and space."),
+    ("Princess Mononoke", 1997, "Animation|Adventure|Fantasy", "Hayao Miyazaki", "A prince becomes entangled in a struggle between forest gods and a mining colony."),
+    ("Howl's Moving Castle", 2004, "Animation|Adventure|Fantasy", "Hayao Miyazaki", "A young woman cursed with old age seeks refuge in the moving castle of a mysterious wizard."),
+    ("Ratatouille", 2007, "Animation|Comedy|Family", "Brad Bird", "A rat who dreams of becoming a chef forms an unlikely partnership with a young kitchen worker."),
+    ("Inside Out", 2015, "Animation|Comedy|Drama", "Pete Docter", "Personified emotions guide a young girl through the upheaval of moving to a new city."),
+    ("Wall-E", 2008, "Animation|Adventure|Family", "Andrew Stanton", "A lonely robot on a trash-covered Earth falls for a sleek probe sent to find signs of life."),
+    ("Finding Nemo", 2003, "Animation|Adventure|Comedy", "Andrew Stanton", "A clownfish searches the ocean for his son who was captured by a diver."),
+    ("Shrek", 2001, "Animation|Adventure|Comedy", "Andrew Adamson", "An ogre and a talking donkey journey to rescue a princess in exchange for reclaiming his swamp."),
+    ("The Incredibles", 2004, "Animation|Action|Adventure", "Brad Bird", "A family of retired superheroes is forced back into action to save the world."),
+    ("Kung Fu Panda", 2008, "Animation|Action|Comedy", "Mark Osborne", "An overweight panda is unexpectedly chosen to fulfil an ancient prophecy as a kung fu master."),
+    ("Moana", 2016, "Animation|Adventure|Comedy", "Ron Clements", "A chief's daughter sails across the ocean to save her people with the help of a demigod."),
+    ("Frozen", 2013, "Animation|Adventure|Comedy", "Chris Buck", "A princess sets out to find her sister, whose icy powers have trapped their kingdom in eternal winter."),
+    ("Deadpool", 2016, "Action|Comedy|Sci-Fi", "Tim Miller", "A wisecracking mercenary gains accelerated healing and hunts down the man who disfigured him."),
+    ("Guardians of the Galaxy", 2014, "Action|Adventure|Comedy", "James Gunn", "A group of misfit outlaws band together to protect the galaxy from a powerful threat."),
+    ("Thor: Ragnarok", 2017, "Action|Adventure|Comedy", "Taika Waititi", "Thor must escape an alien planet gladiator arena to stop the destruction of his home world."),
+    ("Iron Man", 2008, "Action|Adventure|Sci-Fi", "Jon Favreau", "A billionaire engineer builds a powered suit of armour to fight his enemies and injustice."),
+    ("Black Panther", 2018, "Action|Adventure|Sci-Fi", "Ryan Coogler", "A new king must protect his technologically advanced nation from enemies within and abroad."),
+    ("Wonder Woman", 2017, "Action|Adventure|Fantasy", "Patty Jenkins", "An Amazon princess leaves her island home to help end a war and discovers her true destiny."),
+    ("Logan", 2017, "Action|Drama|Sci-Fi", "James Mangold", "An aging Wolverine cares for an ailing Professor X while protecting a young mutant girl."),
+    ("Django Unchained", 2012, "Drama|Western", "Quentin Tarantino", "A freed slave partners with a bounty hunter to rescue his wife from a brutal plantation owner."),
+    ("The Good, the Bad and the Ugly", 1966, "Adventure|Western", "Sergio Leone", "Three gunslingers compete to find a fortune in buried Confederate gold amid the Civil War."),
+    ("Unforgiven", 1992, "Drama|Western", "Clint Eastwood", "A retired gunslinger takes one last job that forces him to confront his violent past."),
+    ("The Hateful Eight", 2015, "Crime|Drama|Mystery", "Quentin Tarantino", "Eight strangers seek refuge from a blizzard in a cabin, where tensions and secrets erupt."),
+    ("Casino Royale", 2006, "Action|Adventure|Thriller", "Martin Campbell", "James Bond earns his licence to kill while pursuing a financier of global terrorism."),
+    ("Skyfall", 2012, "Action|Adventure|Thriller", "Sam Mendes", "Bond investigates an attack on MI6 that is tied to a villain from M's past."),
+    ("Mission: Impossible - Fallout", 2018, "Action|Adventure|Thriller", "Christopher McQuarrie", "Ethan Hunt races against time after a mission leaves the world in danger."),
+    ("The Bourne Identity", 2002, "Action|Mystery|Thriller", "Doug Liman", "An amnesiac trained assassin fights to piece together his identity while being hunted."),
+    ("Léon: The Professional", 1994, "Action|Crime|Drama", "Luc Besson", "A hitman reluctantly takes in a young girl and teaches her his trade after her family is murdered."),
+    ("Kill Bill: Vol. 1", 2003, "Action|Crime|Thriller", "Quentin Tarantino", "A former assassin wakes from a coma and sets out for vengeance against her ex-colleagues."),
+    ("Trainspotting", 1996, "Drama", "Danny Boyle", "A group of heroin addicts navigate life, love and self-destruction in Edinburgh."),
+    ("American History X", 1998, "Crime|Drama", "Tony Kaye", "A former neo-Nazi tries to prevent his younger brother from following the same violent path."),
+    ("Requiem for a Dream", 2000, "Drama", "Darren Aronofsky", "Four people's lives spiral into addiction as their American dreams collapse."),
+    ("Black Swan", 2010, "Drama|Thriller", "Darren Aronofsky", "A ballerina's obsession with perfection leads to a psychological breakdown before a big premiere."),
+    ("Room", 2015, "Drama|Thriller", "Lenny Abrahamson", "A mother and her young son held captive escape and adjust to the outside world."),
+    ("Manchester by the Sea", 2016, "Drama", "Kenneth Lonergan", "A man returns to his hometown to care for his nephew after his brother's death and confronts his past."),
+    ("Moonlight", 2016, "Drama", "Barry Jenkins", "A young Black man's coming of age is chronicled across three defining chapters of his life."),
+    ("Little Women", 2019, "Drama|Romance", "Greta Gerwig", "Four sisters navigate love, ambition and independence in post-Civil War Massachusetts."),
+    ("Lady Bird", 2017, "Comedy|Drama", "Greta Gerwig", "A headstrong teenager navigates a turbulent relationship with her mother during her senior year."),
+    ("Call Me by Your Name", 2017, "Drama|Romance", "Luca Guadagnino", "A summer romance blossoms between a teenager and a visiting scholar in 1980s Italy."),
+    ("Brokeback Mountain", 2005, "Drama|Romance", "Ang Lee", "Two cowboys develop a complicated, lifelong relationship over decades in the American West."),
+    ("Slumdog Millionaire", 2008, "Drama|Romance", "Danny Boyle", "A young man from the Mumbai slums recounts his life story to explain his unlikely game-show success."),
+    ("3 Idiots", 2009, "Comedy|Drama", "Rajkumar Hirani", "Two friends search for their long-lost engineering-college companion who taught them to live life on their own terms."),
+    ("Dangal", 2016, "Biography|Drama|Sport", "Nitesh Tiwari", "A former wrestler trains his daughters to become world-class wrestlers despite social resistance."),
+    ("Gully Boy", 2019, "Drama|Music", "Zoya Akhtar", "A street rapper from the slums of Mumbai chases his dream of making it big in hip-hop."),
+    ("Andhadhun", 2018, "Crime|Drama|Thriller", "Sriram Raghavan", "A blind pianist becomes entangled in a murder and must navigate a web of deception."),
+    ("Zindagi Na Milegi Dobara", 2011, "Comedy|Drama", "Zoya Akhtar", "Three friends confront personal fears during a bachelor road trip across Spain."),
+    ("Queen", 2013, "Comedy|Drama", "Vikas Bahl", "A jilted bride embarks on her honeymoon alone and discovers newfound independence."),
+    ("Taare Zameen Par", 2007, "Drama|Family", "Aamir Khan", "A dyslexic child's struggles at school are transformed by an understanding art teacher."),
+    ("Lagaan", 2001, "Adventure|Drama|Musical", "Ashutosh Gowariker", "Villagers challenge colonial officers to a cricket match to escape crushing land taxes."),
+    ("Barfi!", 2012, "Comedy|Drama|Romance", "Anurag Basu", "A deaf-mute man's love story unfolds alongside a woman with autism and his childhood love."),
+    ("Pink", 2016, "Crime|Drama|Thriller", "Aniruddha Roy Chowdhury", "A lawyer defends three women falsely accused after resisting an assault, challenging social norms about consent."),
+    ("Article 15", 2019, "Crime|Drama", "Anubhav Sinha", "A police officer investigates the disappearance of girls in a caste-riven rural village."),
+    ("Drishyam", 2015, "Crime|Drama|Thriller", "Nishikant Kamat", "A father goes to extraordinary lengths to protect his family after a fatal accident is covered up."),
+    ("Kahaani", 2012, "Mystery|Thriller", "Sujoy Ghosh", "A pregnant woman searches Kolkata for her missing husband, uncovering a dangerous conspiracy."),
+    ("Tumbbad", 2018, "Horror|Fantasy", "Rahi Anil Barve", "A family guards a dark secret tied to a mythical goddess of prosperity and greed."),
+    ("A Wednesday", 2008, "Crime|Drama|Thriller", "Neeraj Pandey", "An anonymous caller threatens a city with bombs unless terrorists in custody are released."),
+    ("The Lunchbox", 2013, "Drama|Romance", "Ritesh Batra", "A mistaken lunchbox delivery sparks an unlikely correspondence between a lonely housewife and a widower."),
+    ("Interview with the Vampire", 1994, "Drama|Fantasy|Horror", "Neil Jordan", "A vampire recounts centuries of immortal life, loss and moral struggle to a modern-day reporter."),
+    ("Edge of Tomorrow", 2014, "Action|Sci-Fi", "Doug Liman", "A soldier relives the same brutal battle against an alien invasion, growing stronger each time."),
+    ("Looper", 2012, "Action|Crime|Sci-Fi", "Rian Johnson", "A hitman who kills targets sent from the future confronts his own future self."),
+    ("Minority Report", 2002, "Action|Crime|Mystery", "Steven Spielberg", "A police officer who arrests future criminals before they act becomes the accused himself."),
+    ("District 9", 2009, "Action|Sci-Fi|Thriller", "Neill Blomkamp", "A bureaucrat tasked with relocating alien refugees begins to transform into one of them."),
+    ("Children of Men", 2006, "Drama|Sci-Fi|Thriller", "Alfonso Cuarón", "In a future without births for 18 years, a man must protect the world's only pregnant woman."),
+    ("Gravity", 2013, "Drama|Sci-Fi|Thriller", "Alfonso Cuarón", "Two astronauts struggle to survive after debris destroys their space shuttle."),
+    ("The Martian", 2015, "Adventure|Drama|Sci-Fi", "Ridley Scott", "An astronaut stranded on Mars must find a way to survive and signal Earth for rescue."),
+    ("Ready Player One", 2018, "Action|Adventure|Sci-Fi", "Steven Spielberg", "A teenager competes in a virtual reality contest to inherit control of the simulated universe."),
+    ("Chef", 2014, "Comedy|Drama", "Jon Favreau", "A chef who loses his restaurant job rediscovers his passion for cooking with a food truck."),
+    ("Julie & Julia", 2009, "Biography|Comedy|Drama", "Nora Ephron", "A blogger cooks her way through Julia Child's cookbook while the chef's own story is told in parallel."),
+    ("The Grand Seduction", 2013, "Comedy", "Don McKellar", "A small fishing village conspires to convince a doctor to stay and secure a lucrative factory contract."),
+]
+
+GENRE_TASTE_WEIGHTS = {
+    "Action-Sci-Fi Fan": {"Action": 3, "Sci-Fi": 3, "Adventure": 2, "Thriller": 1.5},
+    "Drama Purist": {"Drama": 3, "Biography": 2, "History": 1.5, "Romance": 1},
+    "Horror-Thriller Fan": {"Horror": 3, "Thriller": 2.5, "Mystery": 2},
+    "Animated-Family Fan": {"Animation": 3, "Family": 2.5, "Comedy": 1.5, "Adventure": 1},
+    "Crime-Noir Fan": {"Crime": 3, "Thriller": 2, "Mystery": 1.5, "Drama": 1},
+    "Romance-Comedy Fan": {"Romance": 3, "Comedy": 2, "Music": 1},
+    "Prestige Awards Fan": {"Drama": 2, "Biography": 2.5, "History": 2, "War": 1.5},
+    "Bollywood Fan": {"Drama": 1.5, "Music": 2, "Musical": 2.5, "Comedy": 1},
+}
+
+N_USERS = 300
+
+
+def build_movies_df():
+    rows = []
+    for i, (title, year, genres, director, plot) in enumerate(MOVIES, start=1):
+        rows.append({
+            "movie_id": i,
+            "title": title,
+            "year": year,
+            "genres": genres,
+            "director": director,
+            "plot": plot,
+        })
+    return pd.DataFrame(rows)
+
+
+def genre_score(genres_str, weights):
+    genres = genres_str.split("|")
+    return sum(weights.get(g, 0) for g in genres)
+
+
+def build_ratings_df(movies_df):
+    archetypes = list(GENRE_TASTE_WEIGHTS.keys())
+    user_rows = []
+    rating_rows = []
+
+    for user_id in range(1, N_USERS + 1):
+        # each user is a probabilistic mix of 1-2 archetypes (mimics real taste overlap)
+        primary = RNG.choice(archetypes)
+        if RNG.random() < 0.4:
+            secondary = RNG.choice([a for a in archetypes if a != primary])
+            mix = {primary: 0.7, secondary: 0.3}
+        else:
+            mix = {primary: 1.0}
+        user_rows.append({"user_id": user_id, "taste_profile": json.dumps(mix)})
+
+        # each user rates a random subset of movies (20-45), skewed toward their taste
+        n_ratings = RNG.integers(20, 46)
+        scores = np.zeros(len(movies_df))
+        for archetype, w in mix.items():
+            weights = GENRE_TASTE_WEIGHTS[archetype]
+            scores += w * movies_df["genres"].apply(lambda g: genre_score(g, weights)).to_numpy()
+        # softmax-like sampling probability, so on-taste movies are more likely to be *watched*
+        probs = np.exp(scores / 3.0)
+        probs = probs / probs.sum()
+        watched_idx = RNG.choice(len(movies_df), size=n_ratings, replace=False, p=probs)
+
+        for idx in watched_idx:
+            base = scores[idx]
+            # normalize base taste-affinity to a 1-5 rating, add noise, clip
+            rating = 3.0 + (base - np.mean(scores)) / (np.std(scores) + 1e-6) * 1.1
+            rating += RNG.normal(0, 0.6)
+            rating = float(np.clip(round(rating * 2) / 2, 1, 5))  # round to nearest 0.5
+            movie_id = movies_df.iloc[idx]["movie_id"]
+            rating_rows.append({"user_id": user_id, "movie_id": movie_id, "rating": rating})
+
+    return pd.DataFrame(user_rows), pd.DataFrame(rating_rows)
+
+
+if __name__ == "__main__":
+    out_dir = os.path.dirname(__file__)
+    movies_df = build_movies_df()
+    users_df, ratings_df = build_ratings_df(movies_df)
+
+    movies_df.to_csv(os.path.join(out_dir, "movies.csv"), index=False)
+    ratings_df.to_csv(os.path.join(out_dir, "ratings.csv"), index=False)
+    users_df.to_csv(os.path.join(out_dir, "users.csv"), index=False)
+
+    print(f"Movies: {len(movies_df)}")
+    print(f"Users: {len(users_df)}")
+    print(f"Ratings: {len(ratings_df)}  (avg {len(ratings_df)/len(users_df):.1f} per user)")
+    print(f"Rating distribution:\n{ratings_df['rating'].value_counts().sort_index()}")
